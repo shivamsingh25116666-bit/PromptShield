@@ -665,6 +665,23 @@
                 <span class="output-status" style="background: rgba(255,255,255,0.08); color: var(--text-muted);">Inspection View</span>
               </div>
               <div class="output-content" id="output-sanitized"></div>
+          </div>
+
+          <!-- Downstream Demo Agent Card -->
+          <div class="output-box" id="agent-section" style="margin-bottom: 1.25rem; border: 1px solid #3b82f6;">
+            <div class="output-header" style="background: rgba(59, 130, 246, 0.12);">
+              <span style="display: flex; align-items: center; gap: 0.5rem;">
+                <strong style="color: #60a5fa;">🤖 Downstream Demo Agent (Summarizer)</strong>
+                <span style="font-size: 0.7rem; background: rgba(255, 255, 255, 0.1); padding: 0.15rem 0.45rem; border-radius: 0.25rem; color: #cbd5e1;">Demo Agent • Not an LLM</span>
+              </span>
+              <span id="agent-status-badge" class="output-status forwarded-ok">INVOKED</span>
+            </div>
+            <div style="padding: 0.75rem; font-size: 0.825rem;">
+              <div style="font-weight: 600; color: #94a3b8; margin-bottom: 0.25rem;">Content Received by Agent:</div>
+              <div class="output-content" id="agent-input-received" style="max-height: 80px; margin-bottom: 0.75rem; background: #070d17;"></div>
+              <div style="font-weight: 600; color: #94a3b8; margin-bottom: 0.25rem;">Generated Summary:</div>
+              <div class="output-content" id="agent-summary-output" style="max-height: 120px; color: #e2e8f0; background: #070d17;"></div>
+              <div id="agent-note" style="margin-top: 0.5rem; font-size: 0.75rem; color: #94a3b8; font-style: italic;"></div>
             </div>
           </div>
 
@@ -780,7 +797,7 @@
       btnScan.innerHTML = `<span class="spinner"></span> <span>Scanning...</span>`;
 
       try {
-        const response = await fetch("/api/scan", {
+        const response = await fetch("/api/demo-agent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -846,6 +863,28 @@
         forwardedStatus.className = "output-status forwarded-ok";
         forwardedStatus.textContent = "FORWARDED SAFE";
         outputForwarded.textContent = safeText(data.forwarded_text);
+      }
+
+      // Demo Agent Execution Rendering
+      const agentStatusBadge = document.getElementById("agent-status-badge");
+      const agentInputReceived = document.getElementById("agent-input-received");
+      const agentSummaryOutput = document.getElementById("agent-summary-output");
+      const agentNote = document.getElementById("agent-note");
+
+      if (data.agent) {
+        if (data.agent.invoked) {
+          agentStatusBadge.className = "output-status forwarded-ok";
+          agentStatusBadge.textContent = "INVOKED (Protected)";
+          agentInputReceived.textContent = safeText(data.agent.input_text);
+          agentSummaryOutput.textContent = safeText(data.agent.summary);
+          agentNote.textContent = safeText(data.agent.agent_note);
+        } else {
+          agentStatusBadge.className = "output-status forwarded-null";
+          agentStatusBadge.textContent = "DROPPED (Zero Invocations)";
+          agentInputReceived.innerHTML = '<span class="null-callout">🛑 None — Firewall dropped content before agent invocation.</span>';
+          agentSummaryOutput.innerHTML = '<span class="null-callout">🛑 No summary generated — Agent execution was blocked by PromptShield.</span>';
+          agentNote.textContent = safeText(data.agent.agent_note);
+        }
       }
 
       // Findings list
