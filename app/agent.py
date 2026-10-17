@@ -160,17 +160,17 @@ def invoke_agent(
     """
     decision = firewall_decision.upper()
 
-    if decision == "BLOCK" or forwarded_text is None:
-        # Agent is NOT invoked — firewall blocked the content
+    if decision in ("BLOCK", "REVIEW") or forwarded_text is None:
+        # Agent is NOT invoked — firewall blocked or held for review
+        action_desc = "blocked this content" if decision == "BLOCK" else "flagged this content for security review"
         result = AgentResult(
             invoked=False,
             agent_task=agent_task,
             input_text=None,
             summary=None,
             agent_note=(
-                "Agent was NOT invoked. The PromptShield firewall blocked this "
-                "content due to detected prompt-injection threats. No text was "
-                "forwarded and no summary was generated."
+                f"Agent was NOT invoked. The PromptShield firewall {action_desc}. "
+                "No text was forwarded and no summary was generated."
             ),
         )
         # Do NOT log an invocation — the agent was never called

@@ -14,12 +14,21 @@ from enum import Enum
 from typing import List, Optional
 
 from app.scanner import Finding, ScanResult
+from app.security_decision import (
+    AuthorizationClaimType,
+    ResourceSensitivity,
+    SecurityAction,
+    SecurityAssessment,
+    SecurityDecisionEngine,
+    SecurityIntent,
+)
 
 
 class PolicyDecision(str, Enum):
     ALLOW = "ALLOW"
     SANITIZE = "SANITIZE"
     BLOCK = "BLOCK"
+    REVIEW = "REVIEW"
 
 
 @dataclass
@@ -31,11 +40,12 @@ class PolicyEvaluation:
     findings: List[Finding]
     original_text: str
     sanitized_text: str
-    forwarded_text: Optional[str]  # None if and only if blocked
+    forwarded_text: Optional[str]  # None if blocked or held for review
     decision_reason: str
+    security_assessment: Optional[SecurityAssessment] = None
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "decision": self.decision.value,
             "policy_mode": self.policy_mode,
             "risk_score": round(self.risk_score, 4),
@@ -46,6 +56,9 @@ class PolicyEvaluation:
             "forwarded_text": self.forwarded_text,
             "decision_reason": self.decision_reason,
         }
+        if self.security_assessment is not None:
+            data["security_assessment"] = self.security_assessment.to_dict()
+        return data
 
 
 class PolicyEngine:
@@ -60,6 +73,7 @@ class PolicyEngine:
         self.default_mode = default_mode.lower()
         self.sanitize_threshold = sanitize_threshold
         self.block_threshold = block_threshold
+        self.security_engine = SecurityDecisionEngine()
 
     def evaluate(
         self,
@@ -74,6 +88,12 @@ class PolicyEngine:
         # Produce sanitized text by excising or marking malicious spans
         sanitized_text = self._sanitize_text(scan_result.text, scan_result.findings)
 
+        # Evaluate layered security decision across intent, resource, context, and authorization
+        sec_assessment = self.security_engine.assess(
+            text=scan_result.text,
+            agent_task=scan_result.agent_task,
+        )
+
         decision: PolicyDecision
         decision_reason: str
         forwarded_text: Optional[str]
@@ -82,19 +102,23 @@ class PolicyEngine:
         if mode == "block":
             has_critical = any(f.severity == "CRITICAL" for f in scan_result.findings)
             meets_threshold = bool(scan_result.findings) and (scan_result.risk_score >= block_thresh)
+            is_sec_block = sec_assessment.action == SecurityAction.BLOCK
+            is_sec_review = sec_assessment.action == SecurityAction.REVIEW
 
-            if meets_threshold or has_critical:
+            if meets_threshold or has_critical or is_sec_block or is_sec_review:
                 decision = PolicyDecision.BLOCK
                 reasons = []
                 if meets_threshold:
                     reasons.append(f"Risk score {scan_result.risk_score:.2f} meets/exceeds block threshold {block_thresh:.2f}")
                 if has_critical:
                     reasons.append("Contains critical-severity prompt injection or jailbreak indicators")
+                if is_sec_block or is_sec_review:
+                    reasons.append(sec_assessment.decision_reason)
                 decision_reason = f"Blocked: {'; '.join(reasons)}."
                 forwarded_text = None
-            elif not scan_result.findings:
+            elif not scan_result.findings and sec_assessment.action == SecurityAction.ALLOW:
                 decision = PolicyDecision.ALLOW
-                decision_reason = "Allowed: No prompt injection patterns detected."
+                decision_reason = "Allowed: No prompt injection or security threats detected."
                 forwarded_text = scan_result.text
                 sanitized_text = scan_result.text
             else:
@@ -106,15 +130,23 @@ class PolicyEngine:
                 sanitized_text = scan_result.text
 
         elif mode == "sanitize":
-            if not scan_result.findings:
+            if scan_result.findings:
+                decision = PolicyDecision.SANITIZE
+                decision_reason = "Policy mode set to SANITIZE. Malicious instruction spans were redacted."
+                forwarded_text = sanitized_text
+            elif sec_assessment.action == SecurityAction.BLOCK:
+                decision = PolicyDecision.BLOCK
+                decision_reason = sec_assessment.decision_reason
+                forwarded_text = None
+            elif sec_assessment.action == SecurityAction.REVIEW:
+                decision = PolicyDecision.REVIEW
+                decision_reason = sec_assessment.decision_reason
+                forwarded_text = None
+            else:
                 decision = PolicyDecision.ALLOW
                 decision_reason = "Allowed: No prompt injection patterns detected."
                 forwarded_text = scan_result.text
                 sanitized_text = scan_result.text
-            else:
-                decision = PolicyDecision.SANITIZE
-                decision_reason = "Policy mode set to SANITIZE. Malicious instruction spans were redacted."
-                forwarded_text = sanitized_text
 
         elif mode == "allow":
             decision = PolicyDecision.ALLOW
@@ -125,8 +157,10 @@ class PolicyEngine:
             # "auto" adaptive mode
             has_critical = any(f.severity == "CRITICAL" for f in scan_result.findings)
             has_exfiltration = any(f.category == "Data Exfiltration" for f in scan_result.findings)
+            is_sec_block = sec_assessment.action == SecurityAction.BLOCK
+            is_sec_review = sec_assessment.action == SecurityAction.REVIEW
 
-            if scan_result.risk_score >= block_thresh or has_critical or has_exfiltration:
+            if scan_result.risk_score >= block_thresh or has_critical or has_exfiltration or is_sec_block:
                 decision = PolicyDecision.BLOCK
                 reasons = []
                 if scan_result.risk_score >= block_thresh:
@@ -135,7 +169,14 @@ class PolicyEngine:
                     reasons.append("Contains critical-severity prompt injection or jailbreak indicators")
                 if has_exfiltration:
                     reasons.append("Identified unauthorized data exfiltration instructions")
+                if is_sec_block:
+                    reasons.append(sec_assessment.decision_reason)
                 decision_reason = f"Blocked: {'; '.join(reasons)}."
+                forwarded_text = None
+
+            elif is_sec_review:
+                decision = PolicyDecision.REVIEW
+                decision_reason = sec_assessment.decision_reason
                 forwarded_text = None
 
             elif scan_result.risk_score >= self.sanitize_threshold and scan_result.findings:
@@ -154,8 +195,8 @@ class PolicyEngine:
                 )
                 forwarded_text = scan_result.text
 
-        # Invariant check: Blocked text MUST NEVER be forwarded
-        if decision == PolicyDecision.BLOCK:
+        # Invariant check: Blocked or Reviewed text MUST NEVER be forwarded
+        if decision in (PolicyDecision.BLOCK, PolicyDecision.REVIEW):
             forwarded_text = None
 
         return PolicyEvaluation(
@@ -168,6 +209,7 @@ class PolicyEngine:
             sanitized_text=sanitized_text,
             forwarded_text=forwarded_text,
             decision_reason=decision_reason,
+            security_assessment=sec_assessment,
         )
 
     def _sanitize_text(self, text: str, findings: List[Finding]) -> str:

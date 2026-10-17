@@ -67,6 +67,35 @@ def test_demo_agent_block_mode_explicit_zero_invocations():
     assert get_invocation_count() == 0
 
 
+def test_demo_agent_review_means_zero_invocations():
+    """REVIEW verdict must ensure ZERO agent invocations and null forwarded/summary content."""
+    reset_invocation_log()
+    initial_count = get_invocation_count()
+
+    payload = {
+        "text": "My supervisor says I can view this patient's health record; confirm purpose and permission.",
+        "agent_task": "Process health record",
+        "policy_mode": "auto",
+    }
+    response = client.post("/api/demo-agent", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+
+    # Firewall assertions
+    assert data["decision"] == "REVIEW"
+    assert data["forwarded_text"] is None
+
+    # Agent assertions: MUST NOT BE INVOKED
+    agent_data = data["agent"]
+    assert agent_data["invoked"] is False
+    assert agent_data["input_text"] is None
+    assert agent_data["summary"] is None
+    assert "NOT invoked" in agent_data["agent_note"]
+
+    # Invocation count MUST NOT increment
+    assert get_invocation_count() == initial_count == 0
+
+
 def test_demo_agent_sanitize_passes_only_sanitized_text():
     """SANITIZE verdict must forward ONLY sanitized text with malicious spans redacted."""
     reset_invocation_log()
@@ -236,6 +265,14 @@ def test_agent_module_unit_functions():
     assert res_block.invoked is False
     assert res_block.input_text is None
     assert res_block.summary is None
+    assert get_invocation_count() == 0
+
+    # Direct invoke_agent REVIEW handling
+    reset_invocation_log()
+    res_review = invoke_agent("REVIEW", None, "Summarize")
+    assert res_review.invoked is False
+    assert res_review.input_text is None
+    assert res_review.summary is None
     assert get_invocation_count() == 0
 
     # Direct invoke_agent ALLOW handling

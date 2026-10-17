@@ -60,7 +60,7 @@ class FindingModel(BaseModel):
 
 
 class ScanResponse(BaseModel):
-    decision: str = Field(..., description="Action verdict: ALLOW, SANITIZE, or BLOCK.")
+    decision: str = Field(..., description="Action verdict: ALLOW, SANITIZE, BLOCK, or REVIEW.")
     policy_mode: str = Field(..., description="Policy mode evaluated against.")
     risk_score: float = Field(..., description="Heuristic composite risk score between 0.0 and 1.0.")
     risk_level: str = Field(..., description="LOW, MEDIUM, HIGH, or CRITICAL.")
@@ -69,10 +69,14 @@ class ScanResponse(BaseModel):
     sanitized_text: str = Field(..., description="Cleaned text with detected injection directives redacted.")
     forwarded_text: Optional[str] = Field(
         None,
-        description="Text safely forwarded to the agent. Guaranteed to be null if blocked.",
+        description="Text safely forwarded to the agent. Guaranteed to be null if blocked or held for review.",
     )
     agent_task: Optional[str] = Field(None, description="The downstream agent task context.")
     decision_reason: str = Field(..., description="Human-readable justification for the policy decision.")
+    security_assessment: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Layered risk assessment covering intent, requested resource, context, and authorization.",
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -129,7 +133,7 @@ class AgentResultModel(BaseModel):
 class DemoAgentResponse(BaseModel):
     """Combined firewall + demo agent response for the end-to-end workflow."""
     # Firewall fields (same as ScanResponse)
-    decision: str = Field(..., description="Action verdict: ALLOW, SANITIZE, or BLOCK.")
+    decision: str = Field(..., description="Action verdict: ALLOW, SANITIZE, BLOCK, or REVIEW.")
     policy_mode: str = Field(..., description="Policy mode evaluated against.")
     risk_score: float = Field(..., description="Heuristic composite risk score between 0.0 and 1.0.")
     risk_level: str = Field(..., description="LOW, MEDIUM, HIGH, or CRITICAL.")
@@ -138,10 +142,14 @@ class DemoAgentResponse(BaseModel):
     sanitized_text: str = Field(..., description="Cleaned text with detected injection directives redacted.")
     forwarded_text: Optional[str] = Field(
         None,
-        description="Text safely forwarded to the agent. Guaranteed to be null if blocked.",
+        description="Text safely forwarded to the agent. Guaranteed to be null if blocked or held for review.",
     )
     agent_task: Optional[str] = Field(None, description="The downstream agent task context.")
     decision_reason: str = Field(..., description="Human-readable justification for the policy decision.")
+    security_assessment: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Layered risk assessment covering intent, requested resource, context, and authorization.",
+    )
     # Agent result fields
     agent: AgentResultModel = Field(..., description="Demo agent invocation result.")
 
