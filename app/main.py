@@ -6,8 +6,10 @@ and policy enforcement (allow / sanitize / block) for untrusted LLM agent inputs
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from app.policies import PolicyEngine, PolicyEvaluation
@@ -18,6 +20,8 @@ app = FastAPI(
     description="Rule-based Prompt-Injection Firewall (PS3) protecting LLM agents against malicious inputs.",
     version="0.2.0",
 )
+
+INDEX_HTML_PATH = Path(__file__).resolve().parent / "static" / "index.html"
 
 # Global scanner & policy engine instances
 scanner = TransparentScanner()
@@ -67,6 +71,15 @@ class ScanResponse(BaseModel):
     )
     agent_task: Optional[str] = Field(None, description="The downstream agent task context.")
     decision_reason: str = Field(..., description="Human-readable justification for the policy decision.")
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> HTMLResponse:
+    """Serve the judge-friendly web interface."""
+    if INDEX_HTML_PATH.exists():
+        content = INDEX_HTML_PATH.read_text(encoding="utf-8")
+        return HTMLResponse(content=content)
+    return HTMLResponse(content="<h1>PromptShield API</h1><p>Visit <a href='/docs'>/docs</a></p>")
 
 
 @app.get("/health")

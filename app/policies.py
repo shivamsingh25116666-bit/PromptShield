@@ -8,6 +8,7 @@ Implements configurable policy evaluation supporting:
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import List, Optional
@@ -105,9 +106,15 @@ class PolicyEngine:
                 sanitized_text = scan_result.text
 
         elif mode == "sanitize":
-            decision = PolicyDecision.SANITIZE
-            decision_reason = "Policy mode explicitly set to SANITIZE. Malicious instruction spans were redacted."
-            forwarded_text = sanitized_text
+            if not scan_result.findings:
+                decision = PolicyDecision.ALLOW
+                decision_reason = "Allowed: No prompt injection patterns detected."
+                forwarded_text = scan_result.text
+                sanitized_text = scan_result.text
+            else:
+                decision = PolicyDecision.SANITIZE
+                decision_reason = "Policy mode set to SANITIZE. Malicious instruction spans were redacted."
+                forwarded_text = sanitized_text
 
         elif mode == "allow":
             decision = PolicyDecision.ALLOW
@@ -168,28 +175,50 @@ class PolicyEngine:
         if not text or not findings:
             return text
 
-        # Sort findings by start ascending
-        sorted_findings = sorted(findings, key=lambda f: f.start)
-        # Merge overlapping intervals
+        # 1. Expand finding spans if followed by conjoined attack clauses within the same sentence
+        expanded_intervals = []
+        for f in findings:
+            start = f.start
+            end = f.end
+            rule_id = f.rule_id
+
+            rest = text[end:]
+            m_boundary = re.search(r"[\r\n]|(?:\.(?:\s+|$))|[!?]", rest)
+            boundary_idx = (end + m_boundary.start()) if m_boundary else len(text)
+            tail = text[end:boundary_idx]
+            if re.match(r"^\s*(?:and|,|\bthen\b|\binstead\b|\bto\b|\bnow\b|\:)\s+", tail, re.IGNORECASE):
+                end = boundary_idx
+            expanded_intervals.append([start, end, rule_id])
+
+        # 2. Sort intervals by start ascending
+        sorted_intervals = sorted(expanded_intervals, key=lambda x: x[0])
+
+        # 3. Merge overlapping intervals or intervals separated only by connective syntax/conjunctions
         merged_intervals = []
-        for f in sorted_findings:
+        for interval in sorted_intervals:
             if not merged_intervals:
-                merged_intervals.append([f.start, f.end, f.rule_id])
+                merged_intervals.append(interval)
             else:
                 prev = merged_intervals[-1]
-                if f.start <= prev[1]:
-                    prev[1] = max(prev[1], f.end)
-                    prev[2] = f"{prev[2]}+{f.rule_id}"
+                if interval[0] <= prev[1]:
+                    prev[1] = max(prev[1], interval[1])
+                    prev[2] = f"{prev[2]}+{interval[2]}"
                 else:
-                    merged_intervals.append([f.start, f.end, f.rule_id])
+                    gap = text[prev[1]:interval[0]]
+                    if re.fullmatch(r"[\s,;:\-–—\(\)\[\]]*(?:and|then|also|to|or|plus|&)?[\s,;:\-–—\(\)\[\]]*", gap, re.IGNORECASE):
+                        prev[1] = max(prev[1], interval[1])
+                        prev[2] = f"{prev[2]}+{interval[2]}"
+                    else:
+                        merged_intervals.append(interval)
 
-        # Apply redactions in reverse order
+        # 4. Apply redactions in reverse order
         result = list(text)
         for start, end, rule_label in reversed(merged_intervals):
             replacement = f" [REDACTED_INJECTION: {rule_label}] "
             result[start:end] = list(replacement)
 
-        # Clean up excess spaces
+        # 5. Clean up excess spaces and spacing before punctuation
         cleaned = "".join(result)
+        cleaned = re.sub(r"\s+([.,;:!?])", r"\1", cleaned)
         cleaned = "\n".join(" ".join(line.split()) for line in cleaned.splitlines())
         return cleaned.strip()

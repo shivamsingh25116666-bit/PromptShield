@@ -12,9 +12,11 @@
 PromptShield/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py          # FastAPI application (GET /health, POST /api/scan)
+│   ├── main.py          # FastAPI application (GET /, GET /health, POST /api/scan)
 │   ├── scanner.py       # Transparent rule-based scanner with span tracking
-│   └── policies.py      # Policy engine (ALLOW, SANITIZE, BLOCK)
+│   ├── policies.py      # Policy engine (ALLOW, SANITIZE, BLOCK)
+│   └── static/
+│       └── index.html   # Judge-friendly web interface (HTML/CSS/JS)
 ├── data/
 │   ├── attacks.json     # 24 labeled prompt injection and jailbreak attack vectors
 │   ├── benign.json      # 22 diverse benign enterprise & assistant queries
@@ -101,6 +103,7 @@ pip install -r requirements.txt
 ```bash
 uvicorn app.main:app --reload
 ```
+- **Interactive Web Interface:** [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
 - **Health Check:** [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 - **Interactive Swagger Docs:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
